@@ -1,5 +1,3 @@
-'use server'
-
 import { NextRequest, NextResponse } from 'next/server'
 
 const BACKEND_URL = process.env.BACKEND_URL || 'http://127.0.0.1:5001'
