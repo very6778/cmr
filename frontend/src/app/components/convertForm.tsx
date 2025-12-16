@@ -17,6 +17,7 @@ export function ConvertForm() {
   const [isConverting, setIsConverting] = useState(false)
   const [pdfBlob, setPdfBlob] = useState<Blob | null>(null)
   const [progress, setProgress] = useState(0)
+  const [displayedProgress, setDisplayedProgress] = useState(0)  // Yumuşak animasyon için
   const [currency, setCurrency] = useState<string>('$')
   const { toast } = useToast()
 
@@ -43,7 +44,7 @@ export function ConvertForm() {
 
   const fetchProgress = async () => {
     try {
-      const response = await fetch(`${API_URL}/api/progress`, {
+      const response = await fetch('/api/proxy/progress', {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${API_KEY}`,
@@ -65,7 +66,7 @@ export function ConvertForm() {
     setProgress(0)
 
     try {
-      const isFree = await fetch(`${API_URL}/api/isfree`, {
+      const isFree = await fetch('/api/proxy/isfree', {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${API_KEY}`,
@@ -96,12 +97,19 @@ export function ConvertForm() {
         row.eachCell((cell, colIndex) => {
           const headerCell = headerRow.getCell(colIndex)
           const header = headerCell.value?.toString() || `Column${colIndex}`
-          rowData[header] = cell.value
+
+          // Akıllı formatlama: Sadece sayıları yuvarla, stringleri olduğu gibi bırak
+          let value = cell.value
+          if (typeof value === 'number') {
+            // Ondalıklı sayıları 2 haneye yuvarla
+            value = Number(value.toFixed(2))
+          }
+          rowData[header] = value
         })
         jsonData.push(rowData)
       })
 
-      const response = await fetch(`${API_URL}/process-pdf`, {
+      const response = await fetch('/api/proxy/process-pdf', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -115,11 +123,15 @@ export function ConvertForm() {
       const pdfBuffer = await response.arrayBuffer()
       const newPdfBlob = new Blob([pdfBuffer], { type: 'application/pdf' })
       setPdfBlob(newPdfBlob)
-
       toast({
         title: 'İşlem Tamamlandı',
         description: 'PDF başarıyla oluşturuldu.',
       })
+
+      // Progress'i 100'e çıkar ve animasyonun tamamlanmasını bekle
+      setProgress(100)
+      await new Promise(resolve => setTimeout(resolve, 600)) // Animasyon tamamlansın
+
     } catch (error) {
       console.error('Conversion failed:', error)
       toast({
@@ -129,7 +141,6 @@ export function ConvertForm() {
       })
     } finally {
       setIsConverting(false)
-      setProgress(100)
     }
   }
 
@@ -137,8 +148,10 @@ export function ConvertForm() {
     setFile(null)
     setPdfBlob(null)
     setProgress(0)
+    setDisplayedProgress(0)
   }
 
+  // Backend'den gerçek progress'i al
   useEffect(() => {
     let intervalId: NodeJS.Timeout
 
@@ -147,6 +160,26 @@ export function ConvertForm() {
         const currentProgress = await fetchProgress()
         if (currentProgress !== null) {
           setProgress(currentProgress)
+        }
+      }, 1000)
+    }
+
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId)
+      }
+    }
+  }, [isConverting])
+
+  // Backend'den progress al - CSS spring animation ile smooth olacak
+  useEffect(() => {
+    let intervalId: NodeJS.Timeout
+
+    if (isConverting) {
+      intervalId = setInterval(async () => {
+        const currentProgress = await fetchProgress()
+        if (currentProgress !== null) {
+          setDisplayedProgress(currentProgress) // CSS transition halleder
         }
       }, 1000)
     }
@@ -203,8 +236,13 @@ export function ConvertForm() {
       </div>
       {isConverting && (
         <div className="space-y-2">
-          <Progress value={progress} className="w-full" />
-          <p className="text-sm text-gray-600 text-center">{progress}% Tamamlandı</p>
+          <Progress
+            value={displayedProgress}
+            className="w-full h-4 transition-all duration-300 ease-out"
+          />
+          <p className="text-sm font-semibold text-gray-700 text-center tabular-nums">
+            {displayedProgress}% Tamamlandı
+          </p>
         </div>
       )}
 

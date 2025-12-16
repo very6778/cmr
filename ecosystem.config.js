@@ -1,43 +1,35 @@
-```javascript
 module.exports = {
     apps: [
-        // Backend - Python Flask
         {
             name: 'ucs-backend',
             cwd: './backend',
-            script: 'app.py',
-            interpreter: 'python3',
+            script: 'python3',
+            args: 'app.py',
+            interpreter: 'none',
             env: {
                 FLASK_ENV: 'production',
-                PYTHONUNBUFFERED: '1'
             },
-            instances: 1,
-            autorestart: true,
-            watch: false,
-            max_memory_restart: '3G',  // 3GB - İşlem sırasında rahatça kullanılabilir
-            error_file: './logs/backend-error.log',
-            out_file: './logs/backend-out.log',
-            time: true
+            max_memory_restart: '500M',
+            error_file: './backend/logs/backend-error.log',
+            out_file: './backend/logs/backend-out.log',
+            log_date_format: 'YYYY-MM-DD HH:mm:ss',
         },
-
-        // Frontend - Next.js
         {
             name: 'ucs-frontend',
             cwd: './frontend',
             script: 'npm',
             args: 'start',
+            interpreter: 'none',
+            instances: 1,
+            exec_mode: 'cluster',
             env: {
                 NODE_ENV: 'production',
-                PORT: 3000
+                PORT: 3000,
             },
-            instances: 1,
-            autorestart: true,
-            watch: false,
-            max_memory_restart: '3G',  // 3GB - Yüksek trafikte güvenli
-            error_file: './logs/frontend-error.log',
-            out_file: './logs/frontend-out.log',
-            time: true
-        }
-    ]
-};
-```
+            max_memory_restart: '1G',
+            error_file: './frontend/logs/frontend-error.log',
+            out_file: './frontend/logs/frontend-out.log',
+            log_date_format: 'YYYY-MM-DD HH:mm:ss',
+        },
+    ],
+}
