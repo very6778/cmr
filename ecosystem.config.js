@@ -9,7 +9,7 @@ module.exports = {
             env: {
                 FLASK_ENV: 'production',
             },
-            max_memory_restart: '500M',
+            max_memory_restart: '3G',
             error_file: './backend/logs/backend-error.log',
             out_file: './backend/logs/backend-out.log',
             log_date_format: 'YYYY-MM-DD HH:mm:ss',
@@ -17,19 +17,21 @@ module.exports = {
         {
             name: 'ucs-frontend',
             cwd: './frontend',
-            script: 'npm',
+            script: 'node_modules/.bin/next',
             args: 'start',
-            interpreter: 'none',
+            interpreter: '/home/cmr/.nvm/versions/node/v22.21.1/bin/node',
             instances: 1,
-            exec_mode: 'cluster',
+            exec_mode: 'fork',
             env: {
                 NODE_ENV: 'production',
                 PORT: 3000,
+                PATH: '/home/cmr/.nvm/versions/node/v22.21.1/bin:/usr/local/bin:/usr/bin:/bin',
             },
-            max_memory_restart: '1G',
+            max_memory_restart: '3G',
             error_file: './frontend/logs/frontend-error.log',
             out_file: './frontend/logs/frontend-out.log',
             log_date_format: 'YYYY-MM-DD HH:mm:ss',
         },
     ],
 }
+
