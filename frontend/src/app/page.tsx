@@ -13,25 +13,50 @@ export default function SignIn() {
     const email = event.currentTarget.username.value;
     const password = event.currentTarget.password.value;
 
-    const response = await signIn("credentials", {
-      email,
-      password,
-      redirect: false,
-    });
+    try {
+      const response = await signIn("credentials", {
+        email,
+        password,
+        redirect: false,
+      });
 
-    if (response?.error) {
-      toast({
-        title: "Giriş Yapılamadı",
-        description: "Bilgilerinizi kontrol ediniz. Tekrar deneyiniz.",
-        variant: "destructive",
-      });
-    } else {
-      toast({
-        title: "Giriş Yapıldı",
-        description: "Giriş başarılı. Yönlendiriliyorsunuz...",
-        variant: "default",
-      });
-      router.push("/dashboard");
+      if (response?.error) {
+        toast({
+          title: "Giriş Yapılamadı",
+          description: "Bilgilerinizi kontrol ediniz. Tekrar deneyiniz.",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Giriş Yapıldı",
+          description: "Giriş başarılı. Yönlendiriliyorsunuz...",
+          variant: "default",
+        });
+        router.push("/dashboard");
+      }
+    } catch (error: any) {
+      console.error("Login Error:", error);
+      // Check for Server Action mismatch error
+      if (
+        error.message?.includes("Failed to find Server Action") ||
+        error.message?.includes("fetch failed")
+      ) {
+        toast({
+          title: "Sürüm Güncellendi",
+          description: "Sayfa yenileniyor, lütfen tekrar giriş yapın.",
+          variant: "default",
+        });
+        // Short delay to let the toast appear
+        setTimeout(() => {
+          window.location.reload();
+        }, 1000);
+      } else {
+        toast({
+          title: "Hata",
+          description: "Beklenmedik bir hata oluştu.",
+          variant: "destructive",
+        });
+      }
     }
   };
 
