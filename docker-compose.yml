@@ -11,7 +11,7 @@ services:
     container_name: cmr-frontend
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "3070:3000"
     environment:
       - NODE_ENV=production
       - BACKEND_URL=http://cmr-backend:5001
@@ -29,7 +29,7 @@ services:
     container_name: cmr-backend
     restart: unless-stopped
     ports:
-      - "5001:5001"
+      - "5070:5001"
     environment:
       - CORS_DOMAIN=${CORS_DOMAIN:-http://localhost:3000}
       - API_KEY=${API_KEY}
