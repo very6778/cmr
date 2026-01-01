@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 
 const BACKEND_URL = process.env.BACKEND_URL || 'http://127.0.0.1:5001'
+const API_KEY = process.env.API_KEY || ''
 
 export async function POST(request: NextRequest) {
     try {
@@ -10,7 +11,7 @@ export async function POST(request: NextRequest) {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': request.headers.get('Authorization') || '',
+                'Authorization': `Bearer ${API_KEY}`,
             },
             body: JSON.stringify(body),
         })
