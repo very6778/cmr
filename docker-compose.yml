@@ -1,29 +1,7 @@
 version: '3.8'
 
 services:
-  cmr-backend:
-    build:
-      context: .
-      dockerfile: Dockerfile.backend
-    container_name: cmr-backend
-    restart: unless-stopped
-    ports:
-      - "5001:5001"
-    environment:
-      - CORS_DOMAIN=${CORS_DOMAIN:-http://localhost:3000}
-      - API_KEY=${API_KEY}
-    volumes:
-      - backend_outputs:/app/outputs
-      - backend_logs:/app/logs
-    networks:
-      - ucs-network
-    healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:5001/api/isfree" ]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  cmr-frontend:
+  cmr:
     build:
       context: .
       dockerfile: Dockerfile.frontend
@@ -42,15 +20,27 @@ services:
     depends_on:
       - cmr-backend
     networks:
-      - ucs-network
-    healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:3000" ]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      - cmr-network
+
+  cmr-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: cmr-backend
+    restart: unless-stopped
+    ports:
+      - "5001:5001"
+    environment:
+      - CORS_DOMAIN=${CORS_DOMAIN:-http://localhost:3000}
+      - API_KEY=${API_KEY}
+    volumes:
+      - backend_outputs:/app/outputs
+      - backend_logs:/app/logs
+    networks:
+      - cmr-network
 
 networks:
-  ucs-network:
+  cmr-network:
     driver: bridge
 
 volumes:
