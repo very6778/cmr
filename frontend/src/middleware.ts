@@ -6,7 +6,7 @@ export async function middleware(req: Request) {
   // @ts-ignore error-bypass
   const token = await getToken({ req, secret });
 
-  const unprotectedRoutes = ["/api/auth"];
+  const unprotectedRoutes = ["/api/auth", "/api/proxy"];
   const pathname = new URL(req.url).pathname;
 
   if (unprotectedRoutes.some((route) => pathname.startsWith(route))) {
