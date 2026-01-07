@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 import os
 from flask_cors import CORS
 from database import save_file_metadata
+import threading
 
 load_dotenv()
 
@@ -30,6 +31,8 @@ def after_request(response):
     response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
     return response
 
+# Thread-safe progress tracking
+progress_lock = threading.Lock()
 pages = []
 current_progress = 0
 total_progress = 0
@@ -239,15 +242,19 @@ def get_progress():
     auth_header = request.headers.get("Authorization")
     if auth_header != f"Bearer {API_KEY}":
         return jsonify({"error": "Unauthorized"}), 401
+    
     global current_progress, total_progress, is_processing
-    if total_progress > 0 and current_progress == total_progress:
-        # Don't reset immediately if polling helps frontend to see 100%
-        # But original logic had reset here. Keeping it but safely.
-        # Check logic: Original code reset on equality.
-        current_progress = 0
-        total_progress = 0
-        is_processing = False
-    return jsonify({"current": current_progress, "total": total_progress})
+    
+    with progress_lock:
+        local_current = current_progress
+        local_total = total_progress
+        
+        if local_total > 0 and local_current == local_total:
+            current_progress = 0
+            total_progress = 0
+            is_processing = False
+    
+    return jsonify({"current": local_current, "total": local_total})
 
 @app.route('/api/isfree', methods=['GET', 'OPTIONS'])
 def get_isfree():
@@ -256,11 +263,14 @@ def get_isfree():
     auth_header = request.headers.get("Authorization")
     if auth_header != f"Bearer {API_KEY}":
         return jsonify({"error": "Unauthorized"}), 401
-    global is_processing
-    if is_processing:
-        return jsonify({"is_processing": is_processing}), 429
+    
+    with progress_lock:
+        processing = is_processing
+    
+    if processing:
+        return jsonify({"is_processing": processing}), 429
     else:
-        return jsonify({"is_processing": is_processing}), 200
+        return jsonify({"is_processing": processing}), 200
 
 if __name__ == '__main__':
     app.run(port=5001)

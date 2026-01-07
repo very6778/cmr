@@ -151,40 +151,24 @@ export function ConvertForm() {
     setDisplayedProgress(0)
   }
 
-  // Backend'den gerçek progress'i al
+  // Backend'den progress al - tek useEffect ile optimize edildi
   useEffect(() => {
-    let intervalId: NodeJS.Timeout
+    let intervalId: NodeJS.Timeout | null = null
+    let isMounted = true
 
     if (isConverting) {
       intervalId = setInterval(async () => {
+        if (!isMounted) return
         const currentProgress = await fetchProgress()
-        if (currentProgress !== null) {
+        if (currentProgress !== null && isMounted) {
           setProgress(currentProgress)
+          setDisplayedProgress(currentProgress)
         }
-      }, 1000)
+      }, 1500) // 1.5 saniye - daha az yük
     }
 
     return () => {
-      if (intervalId) {
-        clearInterval(intervalId)
-      }
-    }
-  }, [isConverting])
-
-  // Backend'den progress al - CSS spring animation ile smooth olacak
-  useEffect(() => {
-    let intervalId: NodeJS.Timeout
-
-    if (isConverting) {
-      intervalId = setInterval(async () => {
-        const currentProgress = await fetchProgress()
-        if (currentProgress !== null) {
-          setDisplayedProgress(currentProgress) // CSS transition halleder
-        }
-      }, 1000)
-    }
-
-    return () => {
+      isMounted = false
       if (intervalId) {
         clearInterval(intervalId)
       }
