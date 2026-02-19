@@ -123,15 +123,17 @@ export function ConvertForm() {
 
       const pdfBuffer = await response.arrayBuffer()
       const newPdfBlob = new Blob([pdfBuffer], { type: 'application/pdf' })
+
+      // Önce 100% göster, animasyon tamamlansın, sonra sonuç sayfasına geç
+      setProgress(100)
+      setDisplayedProgress(100)
+      await new Promise(resolve => setTimeout(resolve, 800))
+
       setPdfBlob(newPdfBlob)
       toast({
         title: 'İşlem Tamamlandı',
         description: 'PDF başarıyla oluşturuldu.',
       })
-
-      // Progress'i 100'e çıkar ve animasyonun tamamlanmasını bekle
-      setProgress(100)
-      await new Promise(resolve => setTimeout(resolve, 600)) // Animasyon tamamlansın
 
     } catch (error) {
       console.error('Conversion failed:', error)
@@ -152,20 +154,22 @@ export function ConvertForm() {
     setDisplayedProgress(0)
   }
 
-  // Backend'den progress al - tek useEffect ile optimize edildi
+  // Backend'den progress al - sadece ileri gitsin, asla geriye dusmesin
   useEffect(() => {
     let intervalId: NodeJS.Timeout | null = null
     let isMounted = true
+    let maxSeen = 0
 
     if (isConverting) {
       intervalId = setInterval(async () => {
         if (!isMounted) return
         const currentProgress = await fetchProgress()
-        if (currentProgress !== null && isMounted) {
+        if (currentProgress !== null && isMounted && currentProgress > maxSeen) {
+          maxSeen = currentProgress
           setProgress(currentProgress)
           setDisplayedProgress(currentProgress)
         }
-      }, 1500) // 1.5 saniye - daha az yük
+      }, 1500)
     }
 
     return () => {
