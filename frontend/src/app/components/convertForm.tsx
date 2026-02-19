@@ -52,6 +52,7 @@ export function ConvertForm() {
       })
       if (!response.ok) throw new Error('Failed to fetch progress')
       const data = await response.json()
+      if (!data.total || data.total === 0) return 0
       return Math.round((data.current / data.total) * 100)
     } catch (error) {
       console.error('Error fetching progress:', error)

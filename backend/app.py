@@ -9,8 +9,13 @@ import os
 from flask_cors import CORS
 from database import save_file_metadata
 import threading
+import gc
 
 load_dotenv()
+
+# Font buffer'larini bir kere yukle, her istekte tekrar okuma
+_normal_font_buffer = open("./fonts/normal.ttf", "rb").read()
+_bold_font_buffer = open("./fonts/bold.ttf", "rb").read()
 
 # Configuration
 CORS_DOMAIN = os.getenv('CORS_DOMAIN', 'http://localhost:3000')
@@ -21,19 +26,10 @@ if not os.path.exists(OUTPUT_DIR):
     os.makedirs(OUTPUT_DIR)
 
 app = Flask(__name__)
-CORS(app)  # Allow all origins for local development
-
-# Manual CORS headers as backup
-@app.after_request
-def after_request(response):
-    response.headers.add('Access-Control-Allow-Origin', '*')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-    return response
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 # Thread-safe progress tracking
 progress_lock = threading.Lock()
-pages = []
 current_progress = 0
 total_progress = 0
 is_processing = False
@@ -71,7 +67,7 @@ def save_to_local_storage(file_bytes, filename):
     except Exception as e:
         print(f"File Save Error: {e}")
         return False
-        
+
 def format_date(date_string):
     try:
         date_obj = datetime.strptime(date_string, "%Y-%m-%dT%H:%M:%S.%fZ")
@@ -81,94 +77,118 @@ def format_date(date_string):
 
 def edit_pdf(replacements: dict):
     pdf_document = fitz.open("./input.pdf")
-    edited_pages = []
+    try:
+        for page_number in range(pdf_document.page_count):
+            page = pdf_document[page_number]
 
-    for page_number in range(pdf_document.page_count):
-        page = pdf_document[page_number]
+            for text_to_replace, replacement_info in replacements.items():
+                replacement_text = replacement_info["text"]
+                fontname = replacement_info.get("fontname", "normal")
+                fontsize = replacement_info.get("fontsize", 12)
+                wrap = replacement_info.get("wrap", False)
+                wrap_width = replacement_info.get("wrap_width", 25)
 
-        for text_to_replace, replacement_info in replacements.items():
-            replacement_text = replacement_info["text"]
-            fontname = replacement_info.get("fontname", "normal")
-            fontsize = replacement_info.get("fontsize", 12)
-            wrap = replacement_info.get("wrap", False)
-            wrap_width = replacement_info.get("wrap_width", 25)
+                areas = page.search_for(text_to_replace)
+                if areas:
+                    for i, area in enumerate(areas):
+                        if i == 0:
+                            x0, y0, x1, y1 = area
+                            boxArea = (x0, y0 + 2, x1, y1 - 2)
+                            page.add_redact_annot(boxArea, fill=(1, 1, 1))
+                            page.apply_redactions()
 
-            areas = page.search_for(text_to_replace)
-            if areas:
-                for i, area in enumerate(areas):
-                    if i == 0:
-                        x0, y0, x1, y1 = area
-                        boxArea = (x0, y0 + 2, x1, y1 - 2)
-                        page.add_redact_annot(boxArea, fill=(1, 1, 1))
-                        page.apply_redactions()
+                            if y0 >= 0:
+                                y0 += 10.5
+                            else:
+                                y0 -= 8.1
 
-                        if y0 >= 0:
-                            y0 += 10.5
-                        else:
-                            y0 -= 8.1
+                            page.insert_font(fontname="normal", fontbuffer=_normal_font_buffer)
+                            page.insert_font(fontname="bold", fontbuffer=_bold_font_buffer)
 
-                        font = fitz.Font("helvetica", "./fonts/normal.ttf")
-                        page.insert_font(fontname="normal", fontbuffer=font.buffer)
-                        font = fitz.Font("helvetica-bold", "./fonts/bold.ttf")
-                        page.insert_font(fontname="bold", fontbuffer=font.buffer)
+                            if wrap:
+                                wrapped_text = textwrap.fill(replacement_text, width=wrap_width, break_long_words=False)
+                                for i, line in enumerate(wrapped_text.split('\n')):
+                                    y_line = y0 + (i * (fontsize + 2))
+                                    page.insert_text((x0, y_line), line, fontname=fontname, fontsize=fontsize, color=(0, 0, 0))
+                            else:
+                                page.insert_text((x0, y0), replacement_text, fontname=fontname, fontsize=fontsize, color=(0, 0, 0))
+                            break
 
-                        if wrap:
-                            wrapped_text = textwrap.fill(replacement_text, width=wrap_width, break_long_words=False)
-                            for i, line in enumerate(wrapped_text.split('\n')):
-                                y_line = y0 + (i * (fontsize + 2))
-                                page.insert_text((x0, y_line), line, fontname=fontname, fontsize=fontsize, color=(0, 0, 0))
-                        else:
-                            page.insert_text((x0, y0), replacement_text, fontname=fontname, fontsize=fontsize, color=(0, 0, 0))
-                        break
-
-        edited_pages.append(page)
-
-    pdf_bytes = pdf_document.write()
-    pdf_document.close()
-
-    return io.BytesIO(pdf_bytes), edited_pages
+        pdf_bytes = pdf_document.write()
+        return io.BytesIO(pdf_bytes)
+    finally:
+        pdf_document.close()
 
 def merge_pdfs(pdf_list):
     merged_pdf = fitz.open()
+    opened_docs = []
+    try:
+        for pdf in pdf_list:
+            pdf.seek(0)
+            new_pdf = fitz.open(stream=pdf.read())
+            opened_docs.append(new_pdf)
+            merged_pdf.insert_pdf(new_pdf)
 
-    for pdf in pdf_list:
-        pdf.seek(0)
-        new_pdf = fitz.open(stream=pdf.read())
-        merged_pdf.insert_pdf(new_pdf)
+        merged_pdf_bytes = io.BytesIO()
+        merged_pdf.save(merged_pdf_bytes)
+        merged_pdf_bytes.seek(0)
+        return merged_pdf_bytes
+    finally:
+        for doc in opened_docs:
+            doc.close()
+        merged_pdf.close()
+        for pdf in pdf_list:
+            try:
+                pdf.close()
+            except:
+                pass
 
-    merged_pdf_bytes = io.BytesIO()
-    merged_pdf.save(merged_pdf_bytes)
-    merged_pdf.close()
-    merged_pdf_bytes.seek(0)
+def reset_progress_state():
+    global current_progress, total_progress, is_processing
+    with progress_lock:
+        current_progress = 0
+        total_progress = 0
+        is_processing = False
 
-    return merged_pdf_bytes
+@app.route('/health', methods=['GET'])
+def health_check():
+    return jsonify({"status": "ok"}), 200
 
 @app.route('/process-pdf', methods=['POST', 'OPTIONS'])
 def api_process_pdf():
-    global current_progress
-    global total_progress
-    global is_processing
+    global current_progress, total_progress, is_processing
+
     if request.method == 'OPTIONS':
-        if is_processing:
-            return jsonify({"On going processing"}), 429
+        with progress_lock:
+            if is_processing:
+                return jsonify({"error": "On going processing"}), 429
         return '', 200
-    
+
     if request.method == 'POST':
-        is_processing = True
+        with progress_lock:
+            if is_processing:
+                return jsonify({"error": "On going processing"}), 429
+            is_processing = True
+            current_progress = 0
+            total_progress = 0
+
         auth_header = request.headers.get("Authorization")
         if auth_header != f"Bearer {API_KEY}":
-            is_processing = False
+            reset_progress_state()
             return jsonify({"error": "Unauthorized"}), 401
-        
+
+        pages = []
         try:
-            pages.clear()
             data = request.get_json()
             body_data = data.get('data', [])
-            currency = data.get('currency', '$')  # Default to $ if not provided
-            total_progress = len(body_data) + 1
+            currency = data.get('currency', '$')
+
             if not isinstance(body_data, list):
-                is_processing = False
+                reset_progress_state()
                 return jsonify({'error': 'Expected an array of items.'}), 400
+
+            with progress_lock:
+                total_progress = len(body_data) + 1
 
             transformed_data = []
             for item in body_data:
@@ -181,7 +201,6 @@ def api_process_pdf():
                         else:
                             transformed_item[new_key] = str(value)
                 transformed_data.append(transformed_item)
-
 
             for entry in transformed_data:
                 replacements = {
@@ -207,33 +226,41 @@ def api_process_pdf():
                     "13": {"text": entry.get("QUANTITY_VAR", "N/A"), "fontname": "bold", "fontsize": 12, "wrap": True, "wrap_width": 25},
                 }
 
-                edited_pdf, _ = edit_pdf(replacements)
+                edited_pdf = edit_pdf(replacements)
                 pages.append(edited_pdf)
-                current_progress += 1
+                with progress_lock:
+                    current_progress += 1
 
             merged_pdf = merge_pdfs(pages)
-            current_progress += 1
+            with progress_lock:
+                current_progress += 1
+
             current_time = datetime.now().isoformat().replace(':', '-')
             file_name = f"out_{current_time}.pdf"
 
-            # Always save locally now
-            save_to_local_storage(merged_pdf.getvalue(), file_name)
-            current_progress += 1
-            
-            # Save metadata to SQLite
+            merged_pdf_bytes = merged_pdf.getvalue()
+            save_to_local_storage(merged_pdf_bytes, file_name)
             save_file_metadata(file_name, json.dumps(transformed_data, default=str))
-            current_progress += 1
 
-            response = send_file(merged_pdf, as_attachment=True, download_name=file_name, mimetype="application/pdf")
+            response_pdf = io.BytesIO(merged_pdf_bytes)
+            response = send_file(response_pdf, as_attachment=True, download_name=file_name, mimetype="application/pdf")
             response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0, s-maxage=0"
-            is_processing = False
-            total_progress = 0
-            current_progress = 0
             return response
         except Exception as e:
-            print(e)
-            is_processing = False
+            print(f"PDF Processing Error: {e}")
             return jsonify({"error": str(e)}), 500
+        finally:
+            # Tum PDF BytesIO nesnelerini temizle
+            for p in pages:
+                try:
+                    p.close()
+                except:
+                    pass
+            pages.clear()
+            del pages
+            reset_progress_state()
+            fitz.TOOLS.store_shrink(100)
+            gc.collect()
 
 @app.route('/api/progress', methods=['GET', 'OPTIONS'])
 def get_progress():
@@ -242,18 +269,11 @@ def get_progress():
     auth_header = request.headers.get("Authorization")
     if auth_header != f"Bearer {API_KEY}":
         return jsonify({"error": "Unauthorized"}), 401
-    
-    global current_progress, total_progress, is_processing
-    
+
     with progress_lock:
         local_current = current_progress
         local_total = total_progress
-        
-        if local_total > 0 and local_current == local_total:
-            current_progress = 0
-            total_progress = 0
-            is_processing = False
-    
+
     return jsonify({"current": local_current, "total": local_total})
 
 @app.route('/api/isfree', methods=['GET', 'OPTIONS'])
@@ -263,10 +283,10 @@ def get_isfree():
     auth_header = request.headers.get("Authorization")
     if auth_header != f"Bearer {API_KEY}":
         return jsonify({"error": "Unauthorized"}), 401
-    
+
     with progress_lock:
         processing = is_processing
-    
+
     if processing:
         return jsonify({"is_processing": processing}), 429
     else:

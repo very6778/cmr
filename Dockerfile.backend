@@ -25,5 +25,7 @@ RUN mkdir -p outputs logs
 # Expose port
 EXPOSE 5001
 
-# Run with Gunicorn for production
-CMD ["gunicorn", "--bind", "0.0.0.0:5001", "--workers", "2", "--timeout", "900", "app:app"]
+# 1 worker + 4 threads: global state thread-safe, progress tracking calisir
+# max-requests: worker'i 500 istekten sonra yeniden baslat (bellek temizligi)
+# timeout 300: PDF isleme icin yeterli sure
+CMD ["gunicorn", "--bind", "0.0.0.0:5001", "--workers", "1", "--threads", "4", "--worker-class", "gthread", "--timeout", "300", "--graceful-timeout", "30", "--max-requests", "200", "--max-requests-jitter", "30", "app:app"]

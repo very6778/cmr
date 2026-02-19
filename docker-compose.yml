@@ -9,7 +9,7 @@ services:
         - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:3000}
         - NEXT_PUBLIC_API_KEY=${API_KEY}
     container_name: cmr-frontend
-    restart: unless-stopped
+    restart: always
     ports:
       - "3070:3000"
     environment:
@@ -19,7 +19,8 @@ services:
       - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
       - API_KEY=${API_KEY}
     depends_on:
-      - cmr-backend
+      cmr-backend:
+        condition: service_healthy
     networks:
       - cmr-network
     deploy:
@@ -36,7 +37,7 @@ services:
       context: .
       dockerfile: Dockerfile.backend
     container_name: cmr-backend
-    restart: unless-stopped
+    restart: always
     ports:
       - "5070:5001"
     environment:
@@ -47,14 +48,20 @@ services:
       - backend_logs:/app/logs
     networks:
       - cmr-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5001/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
     deploy:
       resources:
         limits:
-          cpus: '1'
-          memory: 1G
+          cpus: '2'
+          memory: 2G
         reservations:
-          cpus: '0.25'
-          memory: 256M
+          cpus: '0.5'
+          memory: 512M
 
 networks:
   cmr-network:
