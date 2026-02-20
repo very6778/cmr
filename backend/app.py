@@ -10,6 +10,25 @@ from flask_cors import CORS
 from database import save_file_metadata
 import threading
 import gc
+import atexit
+import time
+
+
+def _shutdown_watchdog():
+    """gthread worker kapanirken threading._shutdown() deadlock'a girebilir.
+    Bu watchdog, kapanma 5 saniyeden uzun surerse os._exit() ile zorla cikar."""
+    time.sleep(5)
+    os._exit(0)
+
+
+def _start_shutdown_watchdog():
+    t = threading.Thread(target=_shutdown_watchdog, daemon=True)
+    t.start()
+
+
+# atexit handler'lar threading._shutdown()'dan ONCE calisir.
+# Watchdog baslar, 5sn sonra hala kapanmadiysa zorla cikar.
+atexit.register(_start_shutdown_watchdog)
 
 load_dotenv()
 

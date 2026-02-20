@@ -23,6 +23,12 @@ services:
         condition: service_healthy
     networks:
       - cmr-network
+    healthcheck:
+      test: ["CMD", "node", "-e", "const http = require('http'); http.get('http://localhost:3000', (r) => { process.exit(r.statusCode < 500 ? 0 : 1) }).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     deploy:
       resources:
         limits:
@@ -62,6 +68,20 @@ services:
         reservations:
           cpus: '0.5'
           memory: 512M
+
+  # Unhealthy container'lari otomatik yeniden baslat
+  # Docker Compose healthcheck tek basina restart YAPMAZ, bu servis yapar
+  autoheal:
+    image: willfarrell/autoheal
+    container_name: cmr-autoheal
+    restart: always
+    environment:
+      - AUTOHEAL_CONTAINER_LABEL=all
+      - AUTOHEAL_INTERVAL=30
+      - AUTOHEAL_START_PERIOD=60
+      - AUTOHEAL_DEFAULT_STOP_TIMEOUT=10
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
 
 networks:
   cmr-network:
