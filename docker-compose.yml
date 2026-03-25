@@ -23,6 +23,7 @@ services:
         condition: service_healthy
     networks:
       - cmr-network
+      - dokploy-network
     healthcheck:
       test: ["CMD", "node", "-e", "const http = require('http'); http.get('http://localhost:3000', (r) => { process.exit(r.statusCode < 500 ? 0 : 1) }).on('error', () => process.exit(1))"]
       interval: 30s
@@ -86,6 +87,8 @@ services:
 networks:
   cmr-network:
     driver: bridge
+  dokploy-network:
+    external: true
 
 volumes:
   backend_outputs:
