@@ -3,12 +3,13 @@ import fitz
 import textwrap
 import io
 import json
-import uuid
 from datetime import datetime
 from dotenv import load_dotenv
 import os
 from flask_cors import CORS
 from database import save_file_metadata
+from cleanup_pdfs import start_background_cleanup
+from jobs_store import get_store
 import threading
 import gc
 import atexit
@@ -32,7 +33,7 @@ atexit.register(_start_shutdown_watchdog)
 load_dotenv()
 
 # Font ve input.pdf buffer'larini modul yuklenirken bir kere oku.
-# preload=True ile gunicorn fork oncesi yuklenir, tum thread'ler paylasir.
+# preload=True ile gunicorn fork oncesi yuklenir, tum worker'lar paylasir.
 _normal_font_buffer = open("./fonts/normal.ttf", "rb").read()
 _bold_font_buffer = open("./fonts/bold.ttf", "rb").read()
 _INPUT_PDF_BYTES = open("./input.pdf", "rb").read()
@@ -41,26 +42,19 @@ CORS_DOMAIN = os.getenv('CORS_DOMAIN', 'http://localhost:3000')
 API_KEY = os.getenv('API_KEY', 'your-secret-api-key')
 OUTPUT_DIR = "outputs"
 MAX_BODY_BYTES = 50 * 1024 * 1024  # 50 MB
-
-# Per-page GC frequency for high page count jobs
 GC_EVERY_N_PAGES = 10
-
-# Finished job'larin bellekte tutulma suresi
-JOB_TTL_SECONDS = 300
 
 if not os.path.exists(OUTPUT_DIR):
     os.makedirs(OUTPUT_DIR)
+
+start_background_cleanup()
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = MAX_BODY_BYTES
 CORS(app, resources={r"/*": {"origins": "*"}})
 
-# Per-job progress tracking. Eski global is_processing mutex kaldirildi.
-# Artik birden fazla istek paralel islenebilir; progress'ler job_id ile izolasyonda.
-# V1 geriye donuk uyumluluk: /api/progress job_id parametresi yoksa en son
-# aktif (yoksa son biten) job'in progress'ini doner.
-jobs_lock = threading.RLock()
-jobs: "dict[str, dict]" = {}
+# jobs_store: Redis (multi-worker) veya memory (tek worker) fallback.
+# Post-fork lazy init: get_store() ilk kullanildigin'da baglanti kurar.
 
 key_map = {
     'Menşei:': 'ORIGIN_VAR',
@@ -85,58 +79,6 @@ key_map = {
     'Marka ve No:': 'MARK_NO_VAR',
     'GÖNDEREN / EXPORTER': 'EXPORTER_VAR',
 }
-
-
-def _new_job(total: int) -> str:
-    job_id = uuid.uuid4().hex[:12]
-    now = time.time()
-    with jobs_lock:
-        jobs[job_id] = {
-            "current": 0,
-            "total": total,
-            "started_at": now,
-            "finished_at": None,
-            "finished": False,
-        }
-        _cleanup_old_jobs_locked(now)
-    return job_id
-
-
-def _update_progress(job_id: str, current: int):
-    with jobs_lock:
-        if job_id in jobs:
-            jobs[job_id]["current"] = current
-
-
-def _finish_job(job_id: str):
-    with jobs_lock:
-        if job_id in jobs:
-            jobs[job_id]["finished"] = True
-            jobs[job_id]["finished_at"] = time.time()
-
-
-def _cleanup_old_jobs_locked(now: float):
-    # jobs_lock altinda cagrilmali
-    stale = [
-        jid for jid, j in jobs.items()
-        if j.get("finished") and j.get("finished_at") and (now - j["finished_at"]) > JOB_TTL_SECONDS
-    ]
-    for jid in stale:
-        jobs.pop(jid, None)
-
-
-def _get_representative_job():
-    with jobs_lock:
-        active = [(jid, j) for jid, j in jobs.items() if not j.get("finished")]
-        if active:
-            # En son baslayan aktif job
-            active.sort(key=lambda kv: kv[1]["started_at"], reverse=True)
-            return active[0]
-        finished = [(jid, j) for jid, j in jobs.items() if j.get("finished_at")]
-        if finished:
-            finished.sort(key=lambda kv: kv[1]["finished_at"], reverse=True)
-            return finished[0]
-    return None
 
 
 def save_to_local_storage(file_bytes, filename):
@@ -201,8 +143,6 @@ def edit_pdf(replacements: dict, page_index: int = 0):
         return io.BytesIO(pdf_bytes)
     finally:
         pdf_document.close()
-        # Yuksek sayfa sayili islerde bellek birikimini parcalara bolen noktasal cleanup.
-        # Bu yerel seviyede yapilir; ana loop zaten periyodik olarak topluyor.
         if page_index and (page_index % GC_EVERY_N_PAGES == 0):
             try:
                 fitz.TOOLS.store_shrink(100)
@@ -216,8 +156,6 @@ def merge_pdfs(pdf_list):
     try:
         for pdf in pdf_list:
             pdf.seek(0)
-            # Her kaynak PDF'i acip insert ettikten hemen sonra kapat.
-            # Eskiden hepsi liste halinde acik tutuluyordu -> 100 sayfalik iste 100 acik doc.
             src = fitz.open(stream=pdf.read(), filetype="pdf")
             try:
                 merged_pdf.insert_pdf(src)
@@ -253,6 +191,7 @@ def api_process_pdf():
 
     pages = []
     job_id = None
+    store = get_store()
     try:
         data = request.get_json()
         body_data = data.get('data', [])
@@ -261,7 +200,7 @@ def api_process_pdf():
         if not isinstance(body_data, list):
             return jsonify({'error': 'Expected an array of items.'}), 400
 
-        job_id = _new_job(total=len(body_data) + 1)
+        job_id = store.new_job(total=len(body_data) + 1)
 
         transformed_data = []
         for item in body_data:
@@ -301,10 +240,10 @@ def api_process_pdf():
 
             edited_pdf = edit_pdf(replacements, page_index=idx)
             pages.append(edited_pdf)
-            _update_progress(job_id, idx)
+            store.update(job_id, idx)
 
         merged_pdf = merge_pdfs(pages)
-        _update_progress(job_id, len(transformed_data) + 1)
+        store.update(job_id, len(transformed_data) + 1)
 
         current_time = datetime.now().isoformat().replace(':', '-')
         file_name = f"out_{current_time}.pdf"
@@ -329,7 +268,10 @@ def api_process_pdf():
                 pass
         pages.clear()
         if job_id is not None:
-            _finish_job(job_id)
+            try:
+                store.finish(job_id)
+            except Exception:
+                pass
         try:
             fitz.TOOLS.store_shrink(100)
         except Exception:
@@ -345,16 +287,15 @@ def get_progress():
     if auth_header != f"Bearer {API_KEY}":
         return jsonify({"error": "Unauthorized"}), 401
 
-    # Yeni: ?job_id=xxx ile spesifik job sorgulanabilir. Yoksa V1 uyumlu davranis.
+    store = get_store()
     job_id = request.args.get("job_id")
     if job_id:
-        with jobs_lock:
-            j = jobs.get(job_id)
+        j = store.get(job_id)
         if not j:
             return jsonify({"current": 0, "total": 0, "unknown": True})
-        return jsonify({"current": j["current"], "total": j["total"], "finished": j["finished"]})
+        return jsonify({"current": j["current"], "total": j["total"], "finished": j.get("finished", False)})
 
-    rep = _get_representative_job()
+    rep = store.representative()
     if not rep:
         return jsonify({"current": 0, "total": 0})
     _, j = rep
@@ -369,9 +310,8 @@ def get_isfree():
     if auth_header != f"Bearer {API_KEY}":
         return jsonify({"error": "Unauthorized"}), 401
 
-    with jobs_lock:
-        processing = any(not j.get("finished") for j in jobs.values())
-
+    store = get_store()
+    processing = store.any_active()
     if processing:
         return jsonify({"is_processing": processing}), 429
     else:

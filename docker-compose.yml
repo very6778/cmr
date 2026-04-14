@@ -10,6 +10,11 @@ services:
         - NEXT_PUBLIC_API_KEY=${API_KEY}
     container_name: cmr-frontend
     restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
     # Host port binding kaldirildi. Traefik dokploy-network uzerinden erisir.
     expose:
       - "3000"
@@ -42,19 +47,62 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=dokploy-network"
+      # Rate limit middleware tanimlari (CF arkasinda oldugumuz icin
+      # sourceCriterion ipStrategy depth=1 -> X-Forwarded-For'un ilk hop'unu
+      # gercek istemci olarak sayar). Agresif degil, flood koruma amacli.
+      - "traefik.http.middlewares.cmr-ratelimit.ratelimit.average=10"
+      - "traefik.http.middlewares.cmr-ratelimit.ratelimit.burst=20"
+      - "traefik.http.middlewares.cmr-ratelimit.ratelimit.period=1s"
+      - "traefik.http.middlewares.cmr-ratelimit.ratelimit.sourcecriterion.ipstrategy.depth=1"
+      # PDF endpoint'i icin daha sikidir: saniyede 2 req, burst 5.
+      - "traefik.http.middlewares.cmr-pdf-ratelimit.ratelimit.average=2"
+      - "traefik.http.middlewares.cmr-pdf-ratelimit.ratelimit.burst=5"
+      - "traefik.http.middlewares.cmr-pdf-ratelimit.ratelimit.period=1s"
+      - "traefik.http.middlewares.cmr-pdf-ratelimit.ratelimit.sourcecriterion.ipstrategy.depth=1"
       # HTTPS router (Let's Encrypt otomatik sertifika)
       - "traefik.http.routers.cmr-frontend.rule=Host(`yedek.opik.online`)"
       - "traefik.http.routers.cmr-frontend.entrypoints=websecure"
       - "traefik.http.routers.cmr-frontend.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.cmr-frontend.middlewares=cmr-ratelimit"
       - "traefik.http.services.cmr-frontend.loadbalancer.server.port=3000"
-      # HTTP router: Cloudflare Flexible/Full tum modlarla uyumlu olsun diye
-      # redirect yerine dogrudan servis ediyoruz. CF proxied + Flexible SSL'de
-      # 308 redirect loop'unu onler.
+      # PDF endpoint icin ayri router (daha sert rate limit)
+      - "traefik.http.routers.cmr-frontend-pdf.rule=Host(`yedek.opik.online`) && PathPrefix(`/api/proxy/process-pdf`)"
+      - "traefik.http.routers.cmr-frontend-pdf.entrypoints=websecure"
+      - "traefik.http.routers.cmr-frontend-pdf.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.cmr-frontend-pdf.service=cmr-frontend"
+      - "traefik.http.routers.cmr-frontend-pdf.middlewares=cmr-pdf-ratelimit"
+      - "traefik.http.routers.cmr-frontend-pdf.priority=100"
+      # HTTP router (CF Flexible uyumu)
       - "traefik.http.routers.cmr-frontend-http.rule=Host(`yedek.opik.online`)"
       - "traefik.http.routers.cmr-frontend-http.entrypoints=web"
       - "traefik.http.routers.cmr-frontend-http.service=cmr-frontend"
+      - "traefik.http.routers.cmr-frontend-http.middlewares=cmr-ratelimit"
       # Uzun PDF stream'leri icin buffer flush
       - "traefik.http.services.cmr-frontend.loadbalancer.responseforwarding.flushinterval=100ms"
+
+  cmr-redis:
+    image: redis:7-alpine
+    container_name: cmr-redis
+    restart: always
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru", "--save", ""]
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "2"
+    networks:
+      - cmr-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 384M
 
   cmr-backend:
     build:
@@ -62,15 +110,26 @@ services:
       dockerfile: Dockerfile.backend
     container_name: cmr-backend
     restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
     # Backend dis dunyaya acilmaz, sadece cmr-network uzerinden frontend erisir.
     expose:
       - "5001"
     environment:
       - CORS_DOMAIN=${CORS_DOMAIN:-http://localhost:3000}
       - API_KEY=${API_KEY}
+      - REDIS_URL=redis://cmr-redis:6379/0
+      - JOBS_BACKEND=${JOBS_BACKEND:-redis}
+      - PDF_MAX_AGE_HOURS=${PDF_MAX_AGE_HOURS:-24}
     volumes:
       - backend_outputs:/app/outputs
       - backend_logs:/app/logs
+    depends_on:
+      cmr-redis:
+        condition: service_healthy
     networks:
       - cmr-network
     healthcheck:
@@ -95,6 +154,11 @@ services:
     image: willfarrell/autoheal
     container_name: cmr-autoheal
     restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "2"
     environment:
       - AUTOHEAL_CONTAINER_LABEL=all
       - AUTOHEAL_INTERVAL=30

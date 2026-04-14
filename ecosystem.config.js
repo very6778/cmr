@@ -4,7 +4,7 @@ module.exports = {
             name: 'ucs-backend',
             cwd: './backend',
             script: './venv/bin/gunicorn',
-            args: '--bind 0.0.0.0:5001 --workers 1 --threads 16 --worker-class gthread --timeout 600 --graceful-timeout 30 --max-requests 1000 --max-requests-jitter 100 --preload app:app',
+            args: '--bind 0.0.0.0:5001 --workers 1 --threads 16 --worker-class gthread --timeout 600 --graceful-timeout 30 --max-requests 500 --max-requests-jitter 50 --preload app:app',
             interpreter: 'none',
             env: {
                 FLASK_ENV: 'production',

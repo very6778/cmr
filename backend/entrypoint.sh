@@ -1,6 +1,5 @@
 #!/bin/sh
 
-# Sinyalleri gunicorn'a ilet (docker stop, restart icin)
 cleanup() {
     echo "[entrypoint] Shutdown signal received, stopping gunicorn..."
     kill -TERM $PID 2>/dev/null
@@ -9,19 +8,25 @@ cleanup() {
 }
 trap cleanup TERM INT QUIT
 
-# Gunicorn: tek worker + cok thread + preload.
-# PyMuPDF C extension'lari GIL release ettigi icin thread-level paralellik
-# cok-core'da gercek hizlanma saglar. Preload ile font+input.pdf fork oncesi yuklenir.
-# Timeout 600s: yuksek sayfa sayili islerde (100+ satir) worker oldurulmesin.
+# Gunicorn: 4 worker (process) x 4 thread = 16 concurrent request.
+# Multi-process CPython GIL'i kirar -> gercek multi-core kullanilir.
+# Progress Redis'te paylasildigi icin worker'lar arasi state sorunu yok.
+# preload: font+input.pdf fork oncesi yuklenir; Redis client lazy, fork-safe.
+WORKERS=${GUNICORN_WORKERS:-4}
+THREADS=${GUNICORN_THREADS:-4}
+TIMEOUT=${GUNICORN_TIMEOUT:-600}
+
+echo "[entrypoint] starting gunicorn: workers=${WORKERS} threads=${THREADS} timeout=${TIMEOUT}"
+
 gunicorn \
     --bind 0.0.0.0:5001 \
-    --workers 1 \
-    --threads 16 \
+    --workers ${WORKERS} \
+    --threads ${THREADS} \
     --worker-class gthread \
-    --timeout 600 \
+    --timeout ${TIMEOUT} \
     --graceful-timeout 30 \
-    --max-requests 1000 \
-    --max-requests-jitter 100 \
+    --max-requests 500 \
+    --max-requests-jitter 50 \
     --worker-tmp-dir /dev/shm \
     --preload \
     app:app &
@@ -38,13 +43,11 @@ echo "[entrypoint] Health monitoring started (PID: $PID)"
 while true; do
     sleep 30
 
-    # Gunicorn process hala yasiyor mu?
     if ! kill -0 $PID 2>/dev/null; then
         echo "[entrypoint] Gunicorn process died, exiting container"
         exit 1
     fi
 
-    # Health endpoint cevap veriyor mu? Timeout 10s (eski 5s, uzun is tolerans).
     if python3 -c "
 import urllib.request
 try:
