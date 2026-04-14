@@ -124,11 +124,10 @@ export function ConvertForm() {
       const pdfBuffer = await response.arrayBuffer()
       const newPdfBlob = new Blob([pdfBuffer], { type: 'application/pdf' })
 
-      // Önce 100% göster, animasyon tamamlansın, sonra sonuç sayfasına geç
+      // Indirme tamamlandi: progress'i 100'e cek ve sonuc sayfasina gec.
+      // (Onceden 800ms yapay gecikme vardi, kaldirildi — kullanici beklemesin.)
       setProgress(100)
       setDisplayedProgress(100)
-      await new Promise(resolve => setTimeout(resolve, 800))
-
       setPdfBlob(newPdfBlob)
       toast({
         title: 'İşlem Tamamlandı',
