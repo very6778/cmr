@@ -339,16 +339,19 @@ def api_process_pdf():
         save_to_local_storage(merged_pdf_bytes, file_name)
         save_file_metadata(file_name, json.dumps(transformed_data, default=str))
 
-        response_pdf = io.BytesIO(merged_pdf_bytes)
-        response = send_file(response_pdf, as_attachment=True, download_name=file_name, mimetype="application/pdf")
-        # Timing bilgisini response header'a koy (UI debug + prod telemetri).
+        # Bytes donmek yerine URL doner: kullanici "indir" butonuna basinca
+        # browser native download manager uzerinden cekilir. API yaniti milisaniye,
+        # kullanici progress'i anlik 100%'e gider, buton donuk kalmaz.
         size_mb = len(merged_pdf_bytes) / 1024 / 1024
         total = time.time() - T["start"]
-        response.headers["X-Processing-Time"] = f"{total:.2f}"
-        response.headers["X-PDF-Size-MB"] = f"{size_mb:.1f}"
-        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0, s-maxage=0"
-        response.headers["X-Job-Id"] = job_id
-        return response
+        return jsonify({
+            "filename": file_name,
+            "download_url": f"/api/download/{file_name}",
+            "size_mb": round(size_mb, 2),
+            "processing_time_sec": round(total, 2),
+            "pages": n,
+            "job_id": job_id,
+        }), 200
     except Exception as e:
         print(f"PDF Processing Error: {e}")
         return jsonify({"error": str(e)}), 500
