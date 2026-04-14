@@ -12,8 +12,11 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).parent
 OUTPUTS_DIR = SCRIPT_DIR / "outputs"
 
-DEFAULT_MAX_AGE_HOURS = int(os.getenv("PDF_MAX_AGE_HOURS", "24"))
-DEFAULT_INTERVAL_SEC = int(os.getenv("PDF_CLEANUP_INTERVAL_SEC", "3600"))
+# Yuksek-trafik prod icin makul defaultlar: 2 saat sonra sil, 15 dakikada bir tara.
+# Her istek ~10-20MB PDF uretir; saatte 1000 istekte 15GB olusur, 2 saat retention
+# disk baskisi olmadan kullanicilara download icin yeterli zaman verir.
+DEFAULT_MAX_AGE_HOURS = int(os.getenv("PDF_MAX_AGE_HOURS", "2"))
+DEFAULT_INTERVAL_SEC = int(os.getenv("PDF_CLEANUP_INTERVAL_SEC", "900"))
 
 
 def cleanup_pdfs(max_age_hours: int = DEFAULT_MAX_AGE_HOURS) -> int:

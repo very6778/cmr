@@ -123,7 +123,8 @@ services:
       - API_KEY=${API_KEY}
       - REDIS_URL=redis://cmr-redis:6379/0
       - JOBS_BACKEND=${JOBS_BACKEND:-redis}
-      - PDF_MAX_AGE_HOURS=${PDF_MAX_AGE_HOURS:-24}
+      - PDF_MAX_AGE_HOURS=${PDF_MAX_AGE_HOURS:-2}
+      - PDF_CLEANUP_INTERVAL_SEC=${PDF_CLEANUP_INTERVAL_SEC:-900}
     volumes:
       - backend_outputs:/app/outputs
       - backend_logs:/app/logs
