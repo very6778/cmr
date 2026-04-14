@@ -9,31 +9,34 @@ cleanup() {
 }
 trap cleanup TERM INT QUIT
 
-# Gunicorn'u arka planda baslat
+# Gunicorn: tek worker + cok thread + preload.
+# PyMuPDF C extension'lari GIL release ettigi icin thread-level paralellik
+# cok-core'da gercek hizlanma saglar. Preload ile font+input.pdf fork oncesi yuklenir.
+# Timeout 600s: yuksek sayfa sayili islerde (100+ satir) worker oldurulmesin.
 gunicorn \
     --bind 0.0.0.0:5001 \
     --workers 1 \
-    --threads 4 \
+    --threads 16 \
     --worker-class gthread \
-    --timeout 60 \
-    --graceful-timeout 10 \
-    --max-requests 200 \
-    --max-requests-jitter 30 \
+    --timeout 600 \
+    --graceful-timeout 30 \
+    --max-requests 1000 \
+    --max-requests-jitter 100 \
     --worker-tmp-dir /dev/shm \
+    --preload \
     app:app &
 
 PID=$!
 
-# Baslamasini bekle
 sleep 5
 
 FAIL_COUNT=0
-MAX_FAILS=3
+MAX_FAILS=5
 
 echo "[entrypoint] Health monitoring started (PID: $PID)"
 
 while true; do
-    sleep 15
+    sleep 30
 
     # Gunicorn process hala yasiyor mu?
     if ! kill -0 $PID 2>/dev/null; then
@@ -41,11 +44,11 @@ while true; do
         exit 1
     fi
 
-    # Health endpoint cevap veriyor mu?
+    # Health endpoint cevap veriyor mu? Timeout 10s (eski 5s, uzun is tolerans).
     if python3 -c "
 import urllib.request
 try:
-    urllib.request.urlopen('http://localhost:5001/health', timeout=5)
+    urllib.request.urlopen('http://localhost:5001/health', timeout=10)
 except Exception:
     exit(1)
 " 2>/dev/null; then
