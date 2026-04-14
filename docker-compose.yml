@@ -42,17 +42,17 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=dokploy-network"
-      # HTTPS router
+      # HTTPS router (Let's Encrypt otomatik sertifika)
       - "traefik.http.routers.cmr-frontend.rule=Host(`yedek.opik.online`)"
       - "traefik.http.routers.cmr-frontend.entrypoints=websecure"
       - "traefik.http.routers.cmr-frontend.tls.certresolver=letsencrypt"
       - "traefik.http.services.cmr-frontend.loadbalancer.server.port=3000"
-      # HTTP -> HTTPS redirect
+      # HTTP router: Cloudflare Flexible/Full tum modlarla uyumlu olsun diye
+      # redirect yerine dogrudan servis ediyoruz. CF proxied + Flexible SSL'de
+      # 308 redirect loop'unu onler.
       - "traefik.http.routers.cmr-frontend-http.rule=Host(`yedek.opik.online`)"
       - "traefik.http.routers.cmr-frontend-http.entrypoints=web"
-      - "traefik.http.routers.cmr-frontend-http.middlewares=redirect-to-https"
-      - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
-      - "traefik.http.middlewares.redirect-to-https.redirectscheme.permanent=true"
+      - "traefik.http.routers.cmr-frontend-http.service=cmr-frontend"
       # Uzun PDF stream'leri icin buffer flush
       - "traefik.http.services.cmr-frontend.loadbalancer.responseforwarding.flushinterval=100ms"
 
