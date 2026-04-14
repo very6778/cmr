@@ -15,7 +15,13 @@ const API_KEY = process.env.NEXT_PUBLIC_API_KEY
 export function ConvertForm() {
   const [file, setFile] = useState<File | null>(null)
   const [isConverting, setIsConverting] = useState(false)
-  const [pdfBlob, setPdfBlob] = useState<Blob | null>(null)
+  const [result, setResult] = useState<{
+    downloadUrl: string
+    fileName: string
+    sizeMb?: number
+    processingTime?: number
+    pages?: number
+  } | null>(null)
   const [progress, setProgress] = useState(0)
   const [displayedProgress, setDisplayedProgress] = useState(0)  // Yumuşak animasyon için
   const [currency, setCurrency] = useState<string>('$')
@@ -121,14 +127,23 @@ export function ConvertForm() {
 
       if (!response.ok) throw new Error('PDF oluşturulurken bir hata oluştu.')
 
-      const pdfBuffer = await response.arrayBuffer()
-      const newPdfBlob = new Blob([pdfBuffer], { type: 'application/pdf' })
+      // Backend artik bytes degil JSON doner:
+      //   { filename, download_url, size_mb, processing_time_sec, pages, job_id }
+      // download_url'i proxy endpoint'i uzerinden kullaniriz; kullanici "indir"e
+      // bastiginda browser kendi download manager'i ile 24MB'i ceker — biz
+      // aradaki Blob/arrayBuffer adimina girmiyoruz.
+      const meta = await response.json()
+      if (!meta.filename) throw new Error('PDF olusturuldu ama dosya adi eksik.')
 
-      // Indirme tamamlandi: progress'i 100'e cek ve sonuc sayfasina gec.
-      // (Onceden 800ms yapay gecikme vardi, kaldirildi — kullanici beklemesin.)
       setProgress(100)
       setDisplayedProgress(100)
-      setPdfBlob(newPdfBlob)
+      setResult({
+        downloadUrl: `/api/proxy/download/${encodeURIComponent(meta.filename)}`,
+        fileName: file.name,
+        sizeMb: meta.size_mb,
+        processingTime: meta.processing_time_sec,
+        pages: meta.pages,
+      })
       toast({
         title: 'İşlem Tamamlandı',
         description: 'PDF başarıyla oluşturuldu.',
@@ -148,7 +163,7 @@ export function ConvertForm() {
 
   const handleReset = () => {
     setFile(null)
-    setPdfBlob(null)
+    setResult(null)
     setProgress(0)
     setDisplayedProgress(0)
   }
@@ -179,11 +194,14 @@ export function ConvertForm() {
     }
   }, [isConverting])
 
-  if (pdfBlob) {
+  if (result) {
     return (
       <ResultPage
-        fileName={file?.name || 'converted.pdf'}
-        pdfBlob={pdfBlob}
+        fileName={result.fileName}
+        downloadUrl={result.downloadUrl}
+        sizeMb={result.sizeMb}
+        processingTime={result.processingTime}
+        pages={result.pages}
         onReset={handleReset}
       />
     )

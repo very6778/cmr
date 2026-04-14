@@ -3,6 +3,8 @@ import fitz
 import textwrap
 import io
 import json
+import uuid as _uuid
+import re
 import multiprocessing as mp
 from datetime import datetime
 from dotenv import load_dotenv
@@ -245,6 +247,29 @@ def health_check():
     return jsonify({"status": "ok"}), 200
 
 
+# Download endpoint: public (auth yok). Rastgele token + zaman ile uretilmis
+# dosya adi tahmin direncine sahiptir. Path traversal icin strict regex.
+_SAFE_FILENAME_RE = re.compile(r'^out_[\w\-.]+_[a-f0-9]{8}\.pdf$')
+
+
+@app.route('/api/download/<path:filename>', methods=['GET'])
+def download_pdf(filename):
+    # Path traversal / injection korumasi
+    if not _SAFE_FILENAME_RE.match(filename):
+        return jsonify({"error": "invalid filename"}), 400
+    file_path = os.path.join(OUTPUT_DIR, filename)
+    # os.path.abspath ile OUTPUT_DIR disi yolu tamamen blokla
+    real = os.path.realpath(file_path)
+    base = os.path.realpath(OUTPUT_DIR)
+    if not real.startswith(base + os.sep):
+        return jsonify({"error": "forbidden"}), 403
+    if not os.path.exists(real):
+        return jsonify({"error": "not found"}), 404
+    response = send_file(real, as_attachment=True, download_name=filename, mimetype="application/pdf")
+    response.headers["Cache-Control"] = "public, max-age=3600"
+    return response
+
+
 @app.route('/process-pdf', methods=['POST', 'OPTIONS'])
 def api_process_pdf():
     if request.method == 'OPTIONS':
@@ -305,8 +330,10 @@ def api_process_pdf():
         merged_pdf = merge_pdfs(pages)
         store.update(job_id, n + 1)
 
+        # Tahmin-dirençli filename: zaman + 8 byte random token.
         current_time = datetime.now().isoformat().replace(':', '-')
-        file_name = f"out_{current_time}.pdf"
+        token = _uuid.uuid4().hex[:8]
+        file_name = f"out_{current_time}_{token}.pdf"
 
         merged_pdf_bytes = merged_pdf.getvalue()
         save_to_local_storage(merged_pdf_bytes, file_name)
