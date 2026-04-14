@@ -213,7 +213,22 @@ def merge_pdfs(pdf_list):
                 src.close()
 
         merged_pdf_bytes = io.BytesIO()
-        merged_pdf.save(merged_pdf_bytes)
+        # Sikistirma + duplicate font/object temizligi.
+        # 182 sayfalik CMR icin ~188MB -> ~15-25MB'e dusurur.
+        #   deflate=True         : tum stream'leri zlib ile sikistir
+        #   deflate_images=True  : image stream'lerini sikistir
+        #   deflate_fonts=True   : font stream'lerini sikistir
+        #   garbage=4            : unreferenced object'leri temizle (duplicate fontlar)
+        #   use_objstms=1        : object stream'ler (daha kompakt xref)
+        merged_pdf.save(
+            merged_pdf_bytes,
+            deflate=True,
+            deflate_images=True,
+            deflate_fonts=True,
+            garbage=4,
+            clean=True,
+            use_objstms=1,
+        )
         merged_pdf_bytes.seek(0)
         return merged_pdf_bytes
     finally:
