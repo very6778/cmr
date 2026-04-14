@@ -366,12 +366,12 @@ def api_process_pdf():
         token = _uuid.uuid4().hex[:8]
         file_name = f"out_{current_time}_{token}.pdf"
 
-        # Tek seferde sikistirilmis kaydetme
-        buf = io.BytesIO()
-        # garbage=4: font/image deduplication — network aktarimi icin kritik
-        # (5x daha kucuk PDF). Yavas ama 3000 satir cap'i ile yonetilebilir.
+        # Diske DOGRUDAN save — BytesIO kopya birikmesi yok.
+        # 5k+ sayfalik islerde BytesIO getvalue() tekrar RAM'e ~500MB aliyordu.
+        # Direkt dosyaya yazarak bu ikinci kopya elimine ediliyor.
+        out_path = os.path.join(OUTPUT_DIR, file_name)
         merged_pdf.save(
-            buf,
+            out_path,
             deflate=True,
             deflate_images=True,
             deflate_fonts=True,
@@ -380,9 +380,8 @@ def api_process_pdf():
             use_objstms=1,
         )
         merged_pdf.close()
-        merged_pdf_bytes = buf.getvalue()
-        buf.close()
-        save_to_local_storage(merged_pdf_bytes, file_name)
+        # PDF boyutu (header icin stat)
+        size_bytes = os.path.getsize(out_path)
         save_file_metadata(file_name, json.dumps(transformed_data, default=str))
         # Save bitti — simdi progress 100%'e cek
         store.update(job_id, progress_total)
@@ -390,7 +389,7 @@ def api_process_pdf():
         # Bytes donmek yerine URL doner: kullanici "indir" butonuna basinca
         # browser native download manager uzerinden cekilir. API yaniti milisaniye,
         # kullanici progress'i anlik 100%'e gider, buton donuk kalmaz.
-        size_mb = len(merged_pdf_bytes) / 1024 / 1024
+        size_mb = size_bytes / 1024 / 1024
         total = time.time() - T["start"]
         return jsonify({
             "filename": file_name,
