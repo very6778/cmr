@@ -279,7 +279,6 @@ def api_process_pdf():
     if auth_header != f"Bearer {API_KEY}":
         return jsonify({"error": "Unauthorized"}), 401
 
-    pages = []
     job_id = None
     store = get_store()
     T = {"start": time.time()}
@@ -308,26 +307,38 @@ def api_process_pdf():
         n = len(transformed_data)
         use_parallel = PARALLEL_WORKERS > 1 and n >= PARALLEL_MIN_ROWS
 
+        # Streaming merge: sayfa bytes'larini toplu bir liste tutmak yerine,
+        # geldikce dogrudan merged_pdf'e ekle ve bytes'i cope at. 5000+ satirda
+        # tek worker'da ~5GB RAM birikmesini (OOM -> SIGKILL) onler.
+        merged_pdf = fitz.open()
+        progress_step = max(1, n // 100)
+
+        def _consume(idx, pdf_bytes):
+            src = fitz.open(stream=pdf_bytes, filetype="pdf")
+            try:
+                merged_pdf.insert_pdf(src)
+            finally:
+                src.close()
+            if idx == n or idx % progress_step == 0:
+                store.update(job_id, idx)
+
         if use_parallel:
-            # Fork context: parent'in _INPUT_PDF_BYTES/font buffer'larini COW ile paylas.
-            # Redis client child'da kullanilmaz; child sadece PDF bytes uretir.
             ctx = mp.get_context("fork")
             args = [(entry, currency, idx) for idx, entry in enumerate(transformed_data, start=1)]
-            chunksize = max(1, n // (PARALLEL_WORKERS * 4))
+            chunksize = max(1, min(64, n // (PARALLEL_WORKERS * 4)))
             with ctx.Pool(processes=PARALLEL_WORKERS) as pool:
                 for idx, pdf_bytes in enumerate(pool.imap(_render_row, args, chunksize=chunksize), start=1):
-                    pages.append(io.BytesIO(pdf_bytes))
-                    # Progress her N (=max(1, n/100)) satirda bir guncelle (Redis'i boguma).
-                    if idx == n or idx % max(1, n // 100) == 0:
-                        store.update(job_id, idx)
+                    _consume(idx, pdf_bytes)
+                    del pdf_bytes  # bellekten hemen dus
         else:
             for idx, entry in enumerate(transformed_data, start=1):
                 replacements = _build_replacements(entry, currency)
                 edited_pdf = edit_pdf(replacements, page_index=idx)
-                pages.append(edited_pdf)
-                store.update(job_id, idx)
+                try:
+                    _consume(idx, edited_pdf.getvalue())
+                finally:
+                    edited_pdf.close()
 
-        merged_pdf = merge_pdfs(pages)
         store.update(job_id, n + 1)
 
         # Tahmin-dirençli filename: zaman + 8 byte random token.
@@ -335,7 +346,20 @@ def api_process_pdf():
         token = _uuid.uuid4().hex[:8]
         file_name = f"out_{current_time}_{token}.pdf"
 
-        merged_pdf_bytes = merged_pdf.getvalue()
+        # Tek seferde sikistirilmis kaydetme
+        buf = io.BytesIO()
+        merged_pdf.save(
+            buf,
+            deflate=True,
+            deflate_images=True,
+            deflate_fonts=True,
+            garbage=4,
+            clean=True,
+            use_objstms=1,
+        )
+        merged_pdf.close()
+        merged_pdf_bytes = buf.getvalue()
+        buf.close()
         save_to_local_storage(merged_pdf_bytes, file_name)
         save_file_metadata(file_name, json.dumps(transformed_data, default=str))
 
@@ -356,12 +380,6 @@ def api_process_pdf():
         print(f"PDF Processing Error: {e}")
         return jsonify({"error": str(e)}), 500
     finally:
-        for p in pages:
-            try:
-                p.close()
-            except Exception:
-                pass
-        pages.clear()
         if job_id is not None:
             try:
                 store.finish(job_id)
@@ -390,10 +408,14 @@ def get_progress():
             return jsonify({"current": 0, "total": 0, "unknown": True})
         return jsonify({"current": j["current"], "total": j["total"], "finished": j.get("finished", False)})
 
+    # Idle: aktif job yoksa finished'in 100%'ini gosterme (yeni kullanici
+    # bastirmadan once boylelikle "hemen 100" gormesin). Sadece canli job'u rapor et.
     rep = store.representative()
     if not rep:
         return jsonify({"current": 0, "total": 0})
-    _, j = rep
+    jid, j = rep
+    if j.get("finished"):
+        return jsonify({"current": 0, "total": 0})
     return jsonify({"current": j["current"], "total": j["total"]})
 
 
