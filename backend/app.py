@@ -115,11 +115,9 @@ def edit_pdf(replacements: dict, page_index: int = 0):
     try:
         for page_number in range(pdf_document.page_count):
             page = pdf_document[page_number]
-            # Fontlari sayfada bir kez kaydet
-            page.insert_font(fontname="normal", fontbuffer=_normal_font_buffer)
-            page.insert_font(fontname="bold", fontbuffer=_bold_font_buffer)
 
-            # Onceden her replacement icin area + insert_text bilgilerini topla
+            # Onceden her replacement icin area + insert_text bilgilerini topla.
+            # Redact annot'lari bu turda eklenir; apply_redactions tek seferde sonunda.
             insert_ops = []
             for text_to_replace, replacement_info in replacements.items():
                 areas = page.search_for(text_to_replace)
@@ -132,11 +130,15 @@ def edit_pdf(replacements: dict, page_index: int = 0):
                 y_off = y0 + 10.5 if y0 >= 0 else y0 - 8.1
                 insert_ops.append((x0, y_off, replacement_info))
 
-            # Tum redact'leri tek seferde uygula
+            # Apply + font register SIRASI ONEMLI:
+            # apply_redactions() content stream'i yeniden uretir -> onceden
+            # kaydedilmis fontlar silinir. Bu yuzden once apply, sonra insert_font.
             if insert_ops:
                 page.apply_redactions()
+                page.insert_font(fontname="normal", fontbuffer=_normal_font_buffer)
+                page.insert_font(fontname="bold", fontbuffer=_bold_font_buffer)
 
-            # Text insert'leri redact'tan sonra yap
+            # Text insert'leri redact + font register'dan sonra yap
             for x0, y_off, info in insert_ops:
                 text = info["text"]
                 fontname = info.get("fontname", "normal")
