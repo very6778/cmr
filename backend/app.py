@@ -405,12 +405,10 @@ def get_isfree():
     if auth_header != f"Bearer {API_KEY}":
         return jsonify({"error": "Unauthorized"}), 401
 
+    # Info-only: multi-worker + async download ile 429 blok mantigi kalktı.
+    # Frontend'e 200 doneriz, isteyen client rakam icin kullanir.
     store = get_store()
-    processing = store.any_active()
-    if processing:
-        return jsonify({"is_processing": processing}), 429
-    else:
-        return jsonify({"is_processing": processing}), 200
+    return jsonify({"is_processing": store.any_active()}), 200
 
 
 if __name__ == '__main__':

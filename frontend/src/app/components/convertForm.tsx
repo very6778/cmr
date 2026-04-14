@@ -73,14 +73,9 @@ export function ConvertForm() {
     setProgress(0)
 
     try {
-      const isFree = await fetch('/api/proxy/isfree', {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${API_KEY}`,
-        },
-      })
-      if (!isFree.ok) throw new Error('Failed to fetch progress')
-
+      // Eski "isfree" gate kaldirildi. Backend multi-worker + async download
+      // mimarisinde paralel isler kabul ediliyor; on kontrol gereksiz ve
+      // bazi durumlarda 429 donup "Failed to fetch" hatasi yaratiyordu.
       const workbook = new ExcelJS.Workbook()
       const fileData = await file.arrayBuffer()
       await workbook.xlsx.load(fileData)
