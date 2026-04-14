@@ -300,7 +300,12 @@ def api_process_pdf():
                 'received': len(body_data),
             }), 413
 
-        job_id = store.new_job(total=len(body_data) + 1)
+        # Progress total'i save+deflate fazi icin ek slot icerir.
+        # render ~%90'a kadar gider; kalan %10 save+download icin rezerve.
+        n_rows = len(body_data)
+        save_reserve = max(int(n_rows * 0.1), 5)
+        progress_total = n_rows + save_reserve
+        job_id = store.new_job(total=progress_total)
 
         transformed_data = []
         for item in body_data:
@@ -351,8 +356,10 @@ def api_process_pdf():
                     _consume(idx, edited_pdf.getvalue())
                 finally:
                     edited_pdf.close()
-
-        store.update(job_id, n + 1)
+        # Render bittikten sonra progress %90 civarinda kalir; save/deflate
+        # surecinde frontend yanitsiz gibi gorunmesin diye burada 100%'e ceksek
+        # de kullanici save biterken "100 ama bekliyor" gorurdu — bu yuzden
+        # progress tam 100%'e ancak save bittikten sonra cekilir.
 
         # Tahmin-dirençli filename: zaman + 8 byte random token.
         current_time = datetime.now().isoformat().replace(':', '-')
@@ -377,6 +384,8 @@ def api_process_pdf():
         buf.close()
         save_to_local_storage(merged_pdf_bytes, file_name)
         save_file_metadata(file_name, json.dumps(transformed_data, default=str))
+        # Save bitti — simdi progress 100%'e cek
+        store.update(job_id, progress_total)
 
         # Bytes donmek yerine URL doner: kullanici "indir" butonuna basinca
         # browser native download manager uzerinden cekilir. API yaniti milisaniye,
