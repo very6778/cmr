@@ -242,10 +242,12 @@ def api_process_pdf():
     pages = []
     job_id = None
     store = get_store()
+    T = {"start": time.time()}
     try:
         data = request.get_json()
         body_data = data.get('data', [])
         currency = data.get('currency', '$')
+        T["parse_json"] = time.time()
 
         if not isinstance(body_data, list):
             return jsonify({'error': 'Expected an array of items.'}), 400
@@ -264,6 +266,7 @@ def api_process_pdf():
                         transformed_item[new_key] = str(value)
             transformed_data.append(transformed_item)
 
+        T["transform"] = time.time()
         n = len(transformed_data)
         use_parallel = PARALLEL_WORKERS > 1 and n >= PARALLEL_MIN_ROWS
 
@@ -286,18 +289,37 @@ def api_process_pdf():
                 pages.append(edited_pdf)
                 store.update(job_id, idx)
 
+        T["render"] = time.time()
         merged_pdf = merge_pdfs(pages)
         store.update(job_id, n + 1)
+        T["merge"] = time.time()
 
         current_time = datetime.now().isoformat().replace(':', '-')
         file_name = f"out_{current_time}.pdf"
 
         merged_pdf_bytes = merged_pdf.getvalue()
+        T["merge_bytes"] = time.time()
         save_to_local_storage(merged_pdf_bytes, file_name)
         save_file_metadata(file_name, json.dumps(transformed_data, default=str))
+        T["save"] = time.time()
 
         response_pdf = io.BytesIO(merged_pdf_bytes)
         response = send_file(response_pdf, as_attachment=True, download_name=file_name, mimetype="application/pdf")
+        T["response_ready"] = time.time()
+        # Profile log
+        size_mb = len(merged_pdf_bytes) / 1024 / 1024
+        total = T["response_ready"] - T["start"]
+        parts = {
+            "parse_json": T["parse_json"] - T["start"],
+            "transform": T["transform"] - T["parse_json"],
+            "render": T["render"] - T["transform"],
+            "merge": T["merge"] - T["render"],
+            "save": T["save"] - T["merge_bytes"],
+            "total_backend": total,
+        }
+        print(f"[profile] n={n} size={size_mb:.1f}MB " +
+              " ".join(f"{k}={v:.2f}s" for k, v in parts.items()),
+              flush=True)
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0, s-maxage=0"
         response.headers["X-Job-Id"] = job_id
         return response
