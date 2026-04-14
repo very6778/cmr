@@ -109,7 +109,7 @@ def edit_pdf(replacements: dict, page_index: int = 0):
     Optimizasyonlar (eski koda gore):
     - insert_font sayfada 2 kez cagrilir (ornek eskiden 40 kez)
     - add_redact_annot topluca eklenir, apply_redactions 1 kez cagrilir (eskiden 20 kez)
-    - search_for hit_max=1 ile ilk match'te durur
+    - search_for sonucunun sadece ilk elemanini kullaniriz (ilk match'te break)
     """
     pdf_document = fitz.open(stream=_INPUT_PDF_BYTES, filetype="pdf")
     try:
@@ -122,7 +122,7 @@ def edit_pdf(replacements: dict, page_index: int = 0):
             # Onceden her replacement icin area + insert_text bilgilerini topla
             insert_ops = []
             for text_to_replace, replacement_info in replacements.items():
-                areas = page.search_for(text_to_replace, hit_max=1)
+                areas = page.search_for(text_to_replace)
                 if not areas:
                     continue
                 area = areas[0]
