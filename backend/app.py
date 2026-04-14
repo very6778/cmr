@@ -335,10 +335,12 @@ def api_process_pdf():
         if use_parallel:
             ctx = mp.get_context("fork")
             args = [(entry, currency, idx) for idx, entry in enumerate(transformed_data, start=1)]
-            # chunksize=1: child sonucu hemen parent'a dondurur, buffer birikmez.
-            # Buyuk islerde (2-3k satir) RAM bounded kalir.
+            # chunksize dengesi: cok kucuk -> IPC overhead (yavas);
+            # cok buyuk -> parent buffer sisme (OOM riski).
+            # max 16 (= 16MB/worker * 4 = 64MB tavan) iyi balans.
+            chunksize = max(1, min(16, n // (PARALLEL_WORKERS * 8)))
             with ctx.Pool(processes=PARALLEL_WORKERS) as pool:
-                for idx, pdf_bytes in enumerate(pool.imap(_render_row, args, chunksize=1), start=1):
+                for idx, pdf_bytes in enumerate(pool.imap(_render_row, args, chunksize=chunksize), start=1):
                     _consume(idx, pdf_bytes)
                     del pdf_bytes
         else:
@@ -359,15 +361,14 @@ def api_process_pdf():
 
         # Tek seferde sikistirilmis kaydetme
         buf = io.BytesIO()
-        # garbage=1 + clean=True: 5k sayfalik islerde garbage=4 cok yavas.
-        # 1 zaten unreferenced object'leri temizler, 4 ekstra agresif deduplication
-        # yapar ama cok pahali. Boyut kazanci 1 icin zaten %95+ yakalaniyor.
+        # garbage=4: font/image deduplication — network aktarimi icin kritik
+        # (5x daha kucuk PDF). Yavas ama 3000 satir cap'i ile yonetilebilir.
         merged_pdf.save(
             buf,
             deflate=True,
             deflate_images=True,
             deflate_fonts=True,
-            garbage=1,
+            garbage=4,
             clean=True,
             use_objstms=1,
         )
