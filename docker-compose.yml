@@ -127,7 +127,7 @@ services:
       - PDF_CLEANUP_INTERVAL_SEC=${PDF_CLEANUP_INTERVAL_SEC:-900}
       - PARALLEL_WORKERS=${PARALLEL_WORKERS:-4}
       - PARALLEL_MIN_ROWS=${PARALLEL_MIN_ROWS:-100}
-      - MAX_ROWS_PER_REQUEST=${MAX_ROWS_PER_REQUEST:-3000}
+      - MAX_ROWS_PER_REQUEST=${MAX_ROWS_PER_REQUEST:-5500}
     volumes:
       - backend_outputs:/app/outputs
       - backend_logs:/app/logs
