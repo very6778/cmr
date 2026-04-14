@@ -125,7 +125,7 @@ services:
       - JOBS_BACKEND=${JOBS_BACKEND:-redis}
       - PDF_MAX_AGE_HOURS=${PDF_MAX_AGE_HOURS:-2}
       - PDF_CLEANUP_INTERVAL_SEC=${PDF_CLEANUP_INTERVAL_SEC:-900}
-      - PARALLEL_WORKERS=${PARALLEL_WORKERS:-4}
+      - PARALLEL_WORKERS=${PARALLEL_WORKERS:-3}
       - PARALLEL_MIN_ROWS=${PARALLEL_MIN_ROWS:-100}
       - MAX_ROWS_PER_REQUEST=${MAX_ROWS_PER_REQUEST:-5500}
     volumes:
@@ -148,7 +148,7 @@ services:
       resources:
         limits:
           cpus: '7'
-          memory: 12G
+          memory: 14G
         reservations:
           cpus: '1'
           memory: 2G

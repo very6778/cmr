@@ -12,8 +12,8 @@ trap cleanup TERM INT QUIT
 # Multi-process CPython GIL'i kirar -> gercek multi-core kullanilir.
 # Progress Redis'te paylasildigi icin worker'lar arasi state sorunu yok.
 # preload: font+input.pdf fork oncesi yuklenir; Redis client lazy, fork-safe.
-WORKERS=${GUNICORN_WORKERS:-4}
-THREADS=${GUNICORN_THREADS:-4}
+WORKERS=${GUNICORN_WORKERS:-2}
+THREADS=${GUNICORN_THREADS:-8}
 TIMEOUT=${GUNICORN_TIMEOUT:-600}
 
 echo "[entrypoint] starting gunicorn: workers=${WORKERS} threads=${THREADS} timeout=${TIMEOUT}"
