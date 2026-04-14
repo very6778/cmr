@@ -120,7 +120,19 @@ export function ConvertForm() {
         body: JSON.stringify({ data: jsonData, currency: currency }),
       })
 
-      if (!response.ok) throw new Error('PDF oluşturulurken bir hata oluştu.')
+      if (!response.ok) {
+        // Backend size limit (413) icin net mesaj goster; digerleri generic.
+        let msg = 'PDF oluşturulurken bir hata oluştu.'
+        try {
+          const errBody = await response.json()
+          if (response.status === 413 && errBody?.max_rows) {
+            msg = `Çok fazla satır (${errBody.received}). Tek seferde en fazla ${errBody.max_rows} satır işlenebilir. Dosyayı bölerek deneyin.`
+          } else if (errBody?.error) {
+            msg = errBody.error
+          }
+        } catch { /* response body JSON değilse generic */ }
+        throw new Error(msg)
+      }
 
       // Backend artik bytes degil JSON doner:
       //   { filename, download_url, size_mb, processing_time_sec, pages, job_id }
