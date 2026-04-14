@@ -144,8 +144,11 @@ export function ConvertForm() {
 
       setProgress(100)
       setDisplayedProgress(100)
+      // Kullanici dostu dosya adi: xlsx adindan turet, proxy'ye ?name= ile
+      // ilet — browser bu adla indirir (backend filename token'li kalir).
+      const friendlyName = file.name.replace(/\.xlsx$/i, '.pdf')
       setResult({
-        downloadUrl: `/api/proxy/download/${encodeURIComponent(meta.filename)}`,
+        downloadUrl: `/api/proxy/download/${encodeURIComponent(meta.filename)}?name=${encodeURIComponent(friendlyName)}`,
         fileName: file.name,
         sizeMb: meta.size_mb,
         processingTime: meta.processing_time_sec,
