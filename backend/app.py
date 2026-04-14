@@ -49,8 +49,11 @@ MAX_BODY_BYTES = 50 * 1024 * 1024  # 50 MB
 GC_EVERY_N_PAGES = 10
 
 # Paralel PDF uretme kontrolleri (10x hizlanma icin)
-PARALLEL_WORKERS = int(os.getenv("PARALLEL_WORKERS", str(min(8, (os.cpu_count() or 4)))))
+PARALLEL_WORKERS = int(os.getenv("PARALLEL_WORKERS", "4"))
 PARALLEL_MIN_ROWS = int(os.getenv("PARALLEL_MIN_ROWS", "100"))
+# Cok yuksek row sayilari icin sert limit. 5k+ istekler tek conteynirde
+# OOM yapar cunku her satir ~1MB. Uzerini client'a onay mesajiyla yonlendir.
+MAX_ROWS_PER_REQUEST = int(os.getenv("MAX_ROWS_PER_REQUEST", "3000"))
 
 if not os.path.exists(OUTPUT_DIR):
     os.makedirs(OUTPUT_DIR)
@@ -290,6 +293,13 @@ def api_process_pdf():
         if not isinstance(body_data, list):
             return jsonify({'error': 'Expected an array of items.'}), 400
 
+        if len(body_data) > MAX_ROWS_PER_REQUEST:
+            return jsonify({
+                'error': f'Cok fazla satir: {len(body_data)}. Tek istekte en fazla {MAX_ROWS_PER_REQUEST} satir islenebilir. Dosyayi bolerek gonderin.',
+                'max_rows': MAX_ROWS_PER_REQUEST,
+                'received': len(body_data),
+            }), 413
+
         job_id = store.new_job(total=len(body_data) + 1)
 
         transformed_data = []
@@ -325,11 +335,12 @@ def api_process_pdf():
         if use_parallel:
             ctx = mp.get_context("fork")
             args = [(entry, currency, idx) for idx, entry in enumerate(transformed_data, start=1)]
-            chunksize = max(1, min(64, n // (PARALLEL_WORKERS * 4)))
+            # chunksize=1: child sonucu hemen parent'a dondurur, buffer birikmez.
+            # Buyuk islerde (2-3k satir) RAM bounded kalir.
             with ctx.Pool(processes=PARALLEL_WORKERS) as pool:
-                for idx, pdf_bytes in enumerate(pool.imap(_render_row, args, chunksize=chunksize), start=1):
+                for idx, pdf_bytes in enumerate(pool.imap(_render_row, args, chunksize=1), start=1):
                     _consume(idx, pdf_bytes)
-                    del pdf_bytes  # bellekten hemen dus
+                    del pdf_bytes
         else:
             for idx, entry in enumerate(transformed_data, start=1):
                 replacements = _build_replacements(entry, currency)
@@ -348,12 +359,15 @@ def api_process_pdf():
 
         # Tek seferde sikistirilmis kaydetme
         buf = io.BytesIO()
+        # garbage=1 + clean=True: 5k sayfalik islerde garbage=4 cok yavas.
+        # 1 zaten unreferenced object'leri temizler, 4 ekstra agresif deduplication
+        # yapar ama cok pahali. Boyut kazanci 1 icin zaten %95+ yakalaniyor.
         merged_pdf.save(
             buf,
             deflate=True,
             deflate_images=True,
             deflate_fonts=True,
-            garbage=4,
+            garbage=1,
             clean=True,
             use_objstms=1,
         )
