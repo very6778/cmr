@@ -10,8 +10,9 @@ services:
         - NEXT_PUBLIC_API_KEY=${API_KEY}
     container_name: cmr-frontend
     restart: always
-    ports:
-      - "3070:3000"
+    # Host port binding kaldirildi. Traefik dokploy-network uzerinden erisir.
+    expose:
+      - "3000"
     environment:
       - NODE_ENV=production
       - BACKEND_URL=http://cmr-backend:5001
@@ -33,11 +34,27 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1'
-          memory: 1G
+          cpus: '1.5'
+          memory: 2G
         reservations:
-          cpus: '0.25'
-          memory: 256M
+          cpus: '0.5'
+          memory: 512M
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=dokploy-network"
+      # HTTPS router
+      - "traefik.http.routers.cmr-frontend.rule=Host(`yedek.opik.online`)"
+      - "traefik.http.routers.cmr-frontend.entrypoints=websecure"
+      - "traefik.http.routers.cmr-frontend.tls.certresolver=letsencrypt"
+      - "traefik.http.services.cmr-frontend.loadbalancer.server.port=3000"
+      # HTTP -> HTTPS redirect
+      - "traefik.http.routers.cmr-frontend-http.rule=Host(`yedek.opik.online`)"
+      - "traefik.http.routers.cmr-frontend-http.entrypoints=web"
+      - "traefik.http.routers.cmr-frontend-http.middlewares=redirect-to-https"
+      - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.redirect-to-https.redirectscheme.permanent=true"
+      # Uzun PDF stream'leri icin buffer flush
+      - "traefik.http.services.cmr-frontend.loadbalancer.responseforwarding.flushinterval=100ms"
 
   cmr-backend:
     build:
@@ -45,8 +62,9 @@ services:
       dockerfile: Dockerfile.backend
     container_name: cmr-backend
     restart: always
-    ports:
-      - "5070:5001"
+    # Backend dis dunyaya acilmaz, sadece cmr-network uzerinden frontend erisir.
+    expose:
+      - "5001"
     environment:
       - CORS_DOMAIN=${CORS_DOMAIN:-http://localhost:3000}
       - API_KEY=${API_KEY}
@@ -56,22 +74,23 @@ services:
     networks:
       - cmr-network
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5001/health')"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 15s
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5001/health', timeout=8)"]
+      # Uzun PDF islerinde false-positive olmamasi icin toleranslar gevsetildi.
+      # 60s + 5 retry x 15s = yaklasik 135s healthy kalma toleransi.
+      interval: 60s
+      timeout: 15s
+      retries: 5
+      start_period: 30s
     deploy:
       resources:
         limits:
-          cpus: '2'
-          memory: 2G
+          cpus: '7'
+          memory: 12G
         reservations:
-          cpus: '0.5'
-          memory: 512M
+          cpus: '1'
+          memory: 2G
 
   # Unhealthy container'lari otomatik yeniden baslat
-  # Docker Compose healthcheck tek basina restart YAPMAZ, bu servis yapar
   autoheal:
     image: willfarrell/autoheal
     container_name: cmr-autoheal
