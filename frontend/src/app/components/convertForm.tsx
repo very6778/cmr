@@ -24,6 +24,7 @@ export function ConvertForm() {
   } | null>(null)
   const [progress, setProgress] = useState(0)
   const [displayedProgress, setDisplayedProgress] = useState(0)  // Yumuşak animasyon için
+  const [elapsedSec, setElapsedSec] = useState(0)
   const [currency, setCurrency] = useState<string>('$')
   const { toast } = useToast()
 
@@ -56,12 +57,11 @@ export function ConvertForm() {
           'Authorization': `Bearer ${API_KEY}`,
         },
       })
-      if (!response.ok) throw new Error('Failed to fetch progress')
+      if (!response.ok) return null
       const data = await response.json()
-      if (!data.total || data.total === 0) return 0
-      return Math.round((data.current / data.total) * 100)
-    } catch (error) {
-      console.error('Error fetching progress:', error)
+      if (!data.total || data.total === 0) return null
+      return Math.min(99, Math.round((data.current / data.total) * 100))
+    } catch {
       return null
     }
   }
@@ -71,6 +71,8 @@ export function ConvertForm() {
 
     setIsConverting(true)
     setProgress(0)
+    setDisplayedProgress(0)
+    setElapsedSec(0)
 
     try {
       // Eski "isfree" gate kaldirildi. Backend multi-worker + async download
@@ -143,7 +145,6 @@ export function ConvertForm() {
       if (!meta.filename) throw new Error('PDF olusturuldu ama dosya adi eksik.')
 
       setProgress(100)
-      setDisplayedProgress(100)
       // Kullanici dostu dosya adi: xlsx adindan turet, proxy'ye ?name= ile
       // ilet — browser bu adla indirir (backend filename token'li kalir).
       const friendlyName = file.name.replace(/\.xlsx$/i, '.pdf')
@@ -176,33 +177,67 @@ export function ConvertForm() {
     setResult(null)
     setProgress(0)
     setDisplayedProgress(0)
+    setElapsedSec(0)
   }
 
-  // Backend'den progress al - sadece ileri gitsin, asla geriye dusmesin
+  // Backend'den progress — hizli polling (500ms), ilk poll anında.
+  // Geri dusmez; backend henuz is baslatmadiysa null doner, 0'da kalir.
   useEffect(() => {
-    let intervalId: NodeJS.Timeout | null = null
-    let isMounted = true
+    if (!isConverting) return
+    let cancelled = false
     let maxSeen = 0
+    let timeoutId: ReturnType<typeof setTimeout> | null = null
 
-    if (isConverting) {
-      intervalId = setInterval(async () => {
-        if (!isMounted) return
-        const currentProgress = await fetchProgress()
-        if (currentProgress !== null && isMounted && currentProgress > maxSeen) {
-          maxSeen = currentProgress
-          setProgress(currentProgress)
-          setDisplayedProgress(currentProgress)
-        }
-      }, 1500)
+    const tick = async () => {
+      if (cancelled) return
+      const p = await fetchProgress()
+      if (!cancelled && p !== null && p > maxSeen) {
+        maxSeen = p
+        setProgress(p)
+      }
+      if (!cancelled) timeoutId = setTimeout(tick, 500)
     }
+    tick()
 
     return () => {
-      isMounted = false
-      if (intervalId) {
-        clearInterval(intervalId)
-      }
+      cancelled = true
+      if (timeoutId) clearTimeout(timeoutId)
     }
   }, [isConverting])
+
+  // Elapsed timer: her saniye guncel tutar (kullanici "hala calisiyor" anlasın).
+  useEffect(() => {
+    if (!isConverting) return
+    const start = Date.now()
+    const id = setInterval(() => {
+      setElapsedSec(Math.floor((Date.now() - start) / 1000))
+    }, 1000)
+    return () => clearInterval(id)
+  }, [isConverting])
+
+  // Smooth interpolation: displayedProgress ~60fps ile progress'e yaklasır.
+  // Tick'ler arası donuk his biter; bar "nefes alir" gibi akar.
+  // Ayrıca backend ilk veriyi gonderene kadar 0 -> 3'e yavas yavas kendi kendine
+  // ilerler (kullanici "takıldı mı" diye düşünmesin).
+  useEffect(() => {
+    if (!isConverting) return
+    let rafId: number
+    let lastTime = performance.now()
+    const animate = (now: number) => {
+      const dt = (now - lastTime) / 1000
+      lastTime = now
+      setDisplayedProgress((prev) => {
+        const target = progress > 0 ? progress : Math.min(3, prev + dt * 1.5)
+        const diff = target - prev
+        if (Math.abs(diff) < 0.05) return target
+        // Ease: saniyede mesafenin %250'si kadar ilerle (yumusak ama hizli).
+        return prev + diff * Math.min(1, dt * 2.5)
+      })
+      rafId = requestAnimationFrame(animate)
+    }
+    rafId = requestAnimationFrame(animate)
+    return () => cancelAnimationFrame(rafId)
+  }, [isConverting, progress])
 
   if (result) {
     return (
@@ -254,11 +289,16 @@ export function ConvertForm() {
         <div className="space-y-2">
           <Progress
             value={displayedProgress}
-            className="w-full h-4 transition-all duration-300 ease-out"
+            className="w-full h-4"
           />
-          <p className="text-sm font-semibold text-gray-700 text-center tabular-nums">
-            {displayedProgress}% Tamamlandı
-          </p>
+          <div className="flex items-center justify-between text-sm text-gray-700 tabular-nums">
+            <span className="font-semibold">
+              {progress === 0 ? 'Hazırlanıyor…' : `${Math.round(displayedProgress)}% Tamamlandı`}
+            </span>
+            <span className="text-gray-500">
+              {Math.floor(elapsedSec / 60)}:{String(elapsedSec % 60).padStart(2, '0')}
+            </span>
+          </div>
         </div>
       )}
 
